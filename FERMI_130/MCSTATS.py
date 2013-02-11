@@ -1,6 +1,5 @@
 '''
 Statistics and plotting tools for Fermi MC tools
-testing
 
 Created on Jul 24, 2012
 @author: Eric Carlson
