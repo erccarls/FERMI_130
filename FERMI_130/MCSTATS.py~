@@ -1,0 +1,623 @@
+'''
+Statistics and plotting tools for Fermi MC tools
+
+
+Created on Jul 24, 2012
+@author: Eric Carlson
+'''
+
+import matplotlib.pyplot as plt  #@UnresolvedImport
+import matplotlib.image as mpimg #@UnresolvedImport
+import matplotlib.cm as cm #@UnresolvedImport
+import matplotlib, scipy #@UnresolvedImport
+import pickle, sys
+import numpy as np
+import scipy.cluster as cluster
+from matplotlib.backends.backend_pdf import PdfPages
+import matplotlib.mlab as mlab
+import math, time
+from scipy.cluster.hierarchy import *
+from operator import itemgetter
+import DBSCAN
+
+
+
+def Compute_Clusters(xCoords, yCoords, fileOut = '',titleString = '', method = 'average', searchMethod='incon',dendogram = False):
+    """
+    Computes hierarchical clusters for a set of vectors.
+    """
+    if (len(xCoords)!=len(yCoords)):
+        print 'Input vectors of unequal length'
+        return
+    
+    #############################################
+    # Compute Cluster Hierarchy
+    #############################################
+
+    # Reformat data for input to clustering algorithm
+    #start = time.time()
+    distMatrix =[]
+    for i in range(len(xCoords)):
+        distMatrix.append((xCoords[i],yCoords[i]))
+        
+    # Compute Clustering Properties
+    Z = cluster.hierarchy.linkage(distMatrix,method=method)
+    #nodeList = Get_Node_List(Z,cutoff=2.5,countCut=6) # Cut branches with 2<n<6 and angular scale > 2.5
+    #nodeList = Get_Node_List(Z,cutoff=2.5,countCut=15) # Cut branches with 2<n<15 and angular scale > 2.5
+    y= cluster.hierarchy.distance.pdist(distMatrix)
+    cophCoef = cluster.hierarchy.cophenet(Z,y)[0] 
+        
+    #elapsed = time.time()-start
+    #print 'Cluster Compute Time: ' + str(elapsed) + ' s'
+    
+    ########################################################################
+    # Dendogram plotting    
+    ########################################################################
+    if (dendogram == True):
+        plt.clf()
+        cluster.hierarchy.dendrogram(Z)
+        plt.title(titleString + '\nMethod: ' + method + ', Cophenetic Coeff: ' + str(round(cophCoef,4)))
+        plt.ylabel(r'Angular Scale $[^\circ]$')
+        plt.xlabel('Member Index')    
+        if fileOut != '':
+            pp = PdfPages(fileOut + '.pdf')
+            plt.savefig(pp, format='pdf')
+            print "Figures saved to ", str(fileOut)+ '.pdf\n',
+            pp.close()
+            #plt.savefig(fileOut + '.png', format='png')
+        #print (meanHeight, cophCoef, meanHeightSigma,len(height))
+        plt.show()
+
+    
+    
+    # Format Data
+    heights = []
+    #for i in nodeList: 
+    #    heights.append(i[0])
+    #print heights
+    
+    #########################################################################
+    # Search for clustering compression via selected methods
+    #########################################################################
+    if searchMethod == 'median':
+        height_sigma = np.std(heights)
+        low_cut = np.median(heights)-height_sigma*1.5
+        high_cut = np.median(heights)+height_sigma*1.5
+        #print 
+        h = []
+        for i in heights:
+            if i>=low_cut and i<=high_cut:
+                h.append(i)
+                #print i
+        count = len(h)
+        meanHeight = np.average(h)
+        meanHeightSigma = np.std(h)/math.sqrt(count)
+        return  (meanHeight, cophCoef, meanHeightSigma,count)
+    
+    
+    elif searchMethod == 'incon':
+        # the incon method takes all clusters with inconsistency>2 at depth 50, averages the highest 5 and cuts at 3 sigma below the mean   
+        depth = 50 
+             
+        incon = cluster.hierarchy.inconsistent(Z,d=depth)
+        incon = np.array(sorted(incon,key=itemgetter(3))) # sort by inconsistency
+        incon2 = []
+        for i in incon:
+            if i[3] > 2.0:
+                incon2.append(i[3])
+                #print i
+        #print len(incon2)
+        
+        endIdx =  len(incon2)-5
+        inconCut = 0
+        if (len(incon2)>5):
+            inconCut=np.average(incon2[endIdx:])-3.0*np.std(incon2)
+        
+        #if len(incon) > 20:
+        #    inconCut = incon[len(incon)-20][3]
+        if inconCut <2.0:
+            inconCut = 2.0
+        #print inconCut
+        
+        
+        #depth is proportional to the cube root of the photon count
+        #clusters = cluster.hierarchy.fcluster(Z, 2.25, criterion='inconsistent', depth=int(len(xCoords)**(1.0/3.0)))
+        clusters = cluster.hierarchy.fcluster(Z, inconCut, criterion='inconsistent', depth=depth)
+        clusterIDs = cluster.hierarchy.leaders(Z, clusters)[0]  # This grabs the list of cluster nodes
+        # Find the nodes and append the distances to a list
+        nodeList = []
+        (node,dictionary) = cluster.hierarchy.to_tree(Z,rd=True)
+        for i in range(node.get_count(),len(dictionary)):
+            if dictionary[i].id in clusterIDs:
+                nodeList.append(dictionary[i].dist)
+                #print dictionary[i].dist
+        
+        #print nodeList
+        return  (np.average(nodeList), cophCoef, np.std(nodeList)/math.sqrt(len(nodeList)),len(nodeList))
+        
+        
+            
+    elif searchMethod == 'bin':
+        width = .75 # bin width
+        binValues = [[],[],[],[],[]] # bin height, mean height, std, excess,count
+        for i in np.arange(0,3.0,.1):
+            low_R = i-width/2.0
+            high_R = i +width/2.0
+            h = []
+            count = 0
+            for j in heights:
+                if j >= low_R and j<=high_R:
+                    h.append(j)
+                    count+=1
+            binValues[0].append(i)
+            binValues[1].append(np.mean(h))
+            binValues[2].append(np.std(h))
+            binValues[3].append(float(count))
+            binValues[4].append(h)
+        maxIndex =np.argmax(binValues[3])
+        count = binValues[3][maxIndex]
+        meanHeight = binValues[1][maxIndex]
+        meanHeightSigma = binValues[2][maxIndex]/math.sqrt(count)
+        #print binValues[4][maxIndex]
+        return  (meanHeight, cophCoef, meanHeightSigma,count)
+    
+    
+    # Calculate the mean height in a window surrounding the mean of the fermi data
+    elif searchMethod=='window':
+        width = 5 # bin width
+        Fermi130_Mean = 1.122
+        low_R  = Fermi130_Mean - width/2.
+        high_R = Fermi130_Mean + width/2.
+        h = []
+        count = 0
+        for j in heights:
+            if j >= low_R and j<=high_R:
+                h.append(j)
+                count+=1
+        meanHeight = np.mean(h)
+        meanHeightSigma = np.std(h)/math.sqrt(count)
+        return (meanHeight,cophCoef,meanHeightSigma, count)
+            
+
+
+def Get_Node_List(Z,cutoff=4.,countCut=10):
+    """Returns a list of clusters in hierarchy with > 2 counts in form (angular scale, count)"""
+    nodeList = []
+    (node,dictionary) = cluster.hierarchy.to_tree(Z,rd=True)
+    for i in range(node.get_count(),len(dictionary)):
+        if dictionary[i].count>2 and dictionary[i].count<=countCut and dictionary[i].dist<cutoff:
+            nodeList.append((dictionary[i].dist,dictionary[i].count))
+    return nodeList
+
+
+
+def Pixel_to_Degrees(vec,outputSize,angularSize):
+    """Converts a scales elements of a vector to degrees"""
+    pix2deg = float(angularSize)/float(outputSize)
+    new=[]
+    for i in range(len(vec)):
+        new.append(vec[i] * pix2deg-float(angularSize)/2.0)
+    return new
+
+
+
+#################################################################################################
+#
+# Plotting Tools
+#
+#################################################################################################
+
+def Height_Histogram(meanHeight,fileOut = '',bins = 40):
+    #Fermi130Data = [0.25679889817507889, 0.45090709625673547, 0.4872581376239058, 0.54165444437078747, 0.5964467634799141, 0.63420591520267733, 0.67736145292509975, 0.79379496304030983, 0.84699485381258577, 0.86518422079973711, 0.96641898300474849, 1.1839616699724151, 1.4619257369232306, 1.7551234119735157, 1.8578040645673146]
+    # ang<3 n<7
+    #Fermi130Data = [0.25679889817507889, 0.45090709625673547, 0.4872581376239058, 0.54165444437078747, 0.5964467634799141, 0.63420591520267733, 0.67736145292509975, 0.79379496304030983, 0.84699485381258577, 0.86518422079973711, 0.96641898300474849, 1.1839616699724151, 1.4619257369232306, 1.7551234119735157, 1.8578040645673146, 2.0364749739498058, 2.6769934767455958]
+    # ang<2.5 n<7
+    #Fermi130Data = [0.25679889817507889, 0.45090709625673547, 0.4872581376239058, 0.54165444437078747, 0.5964467634799141, 0.63420591520267733, 0.67736145292509975, 0.79379496304030983, 0.84699485381258577, 0.86518422079973711, 0.96641898300474849, 1.1839616699724151, 1.4619257369232306, 1.7551234119735157, 1.8578040645673146, 2.0364749739498058]
+    
+    #from incon method
+    Fermi130Data =  [0.24182332910618809, 0.79379496304030983, 0.79572937622478324, 0.96641898300474849, 1.6117668305293791, 1.7208996528029179, 2.0115656210929553, 2.2880041281130605, 3.375652199916336]
+    fig = plt.figure(1)
+    hist = plt.hist(meanHeight[0], bins=bins)
+    hist2 = plt.hist(meanHeight[1], bins=bins)
+    hist3 = plt.hist(meanHeight[2], bins=bins)
+    hist4 = plt.hist(meanHeight[3], bins=bins)
+    histFermi = plt.hist(Fermi130Data, bins=20)
+    plt.clf()
+    fig.set_figwidth(10)
+    fig.set_figheight(8)
+    ax1 = fig.add_subplot(2,2,1)
+    ax1.set_xlabel(r'Clustering Scale $[^\circ]$')
+    ax1.step(hist[1][1:],hist[0]/float(len(meanHeight[0])))
+    plt.axvline(np.mean(Fermi130Data),color = 'r')
+    #plt.text(np.mean(Fermi130Data)+.2, 2, 'Mean 120-140',rotation=90.)
+    
+    
+    # Fit Guassian
+    x = np.average(meanHeight[0])
+    sigma = np.std(meanHeight[0])
+    gaussX = np.arange(0,3,.02)
+    gaussY = mlab.normpdf(gaussX,x,sigma)
+    
+    plt.title(r'$\mu = $' + str(round(x,6)) + r' $\sigma=$ '+ str(round(sigma,6)))
+    
+    #ax1.plot(gaussX,gaussY)
+    ax1.set_xlim((0,2.5))
+    
+#    gaussX_130 = np.arange(0,3,.01)
+#    gaussY_130 = mlab.normpdf(gaussX_130,np.mean(Fermi130Data),np.std(Fermi130Data)/math.sqrt(len(Fermi130Data)))
+#    ax1.plot(gaussX_130,gaussY_130,ls ='-')
+    ax1.step(histFermi[1][1:],histFermi[0]/float(len(Fermi130Data)))
+    
+    
+    from matplotlib.font_manager import FontProperties
+    fontP = FontProperties()
+    fontP.set_size('small')
+    ax1.legend(('MC','Fermi 130 Mean','Fermi 130 Hist'),loc=1, ncol=1, fancybox=True, shadow=False,prop=fontP,borderaxespad=0.,labelspacing = .2)
+    
+    ax2 = fig.add_subplot(2,2,2)
+    ax2.step(hist2[1][1:],hist2[0]/float(len(meanHeight[0])))
+    ax2.set_xlabel(r'Cophenetic Coefficient')
+    
+    ax3 = fig.add_subplot(2,2,3)
+    ax3.step(hist3[1][1:],hist3[0]/float(len(meanHeight[0])))
+    ax3.set_xlabel(r'$\sigma_{\mu}$')
+    
+    ax4 = fig.add_subplot(2,2,4)
+    ax4.step(hist4[1][1:],hist4[0]/float(len(meanHeight[0])))
+    ax4.set_xlabel(r'$N_{Clusters}$')
+    
+    
+    if fileOut != '':
+        pp = PdfPages(fileOut + '.pdf')
+        plt.savefig(pp, format='pdf')
+        print "Figures saved to ", str(fileOut)+ '.pdf\n',
+        pp.close()
+    
+    print 'Mean Num Clusters: ' , np.mean((meanHeight[3])), 'Stdev: ' , np.std((meanHeight[3]))
+    #plt.show()
+    return (x,sigma)
+
+
+
+
+def Height_Histogram2(meanHeights,fileOut = '',bins = 40):
+    #from incon method
+    Fermi130Data =  [0.24182332910618809, 0.79379496304030983, 0.79572937622478324, 0.96641898300474849, 1.6117668305293791, 1.7208996528029179, 2.0115656210929553, 2.2880041281130605, 3.375652199916336]
+    fig = plt.figure(1)
+    
+    data = [[],[]]
+    for i in range(len(meanHeights[0])):
+        data[0].append(meanHeights[0][i])
+        data[1].append(plt.hist(meanHeights[1][i],bins=bins))
+    
+        
+    
+    histFermi = plt.hist(Fermi130Data, bins=16)
+    plt.clf()
+    fig.set_figwidth(10)
+    fig.set_figheight(8)
+    
+    
+    ax1 = fig.add_subplot(1,1,1)
+    ax1.set_xlabel(r'Clustering Scale $[^\circ]$')
+    for i in range(len(meanHeights[0])):
+        ax1.step(data[1][i][1][1:],data[1][i][0]/float(len(meanHeights[1][i])),label = meanHeights[0][i])
+    
+    plt.axvline(np.mean(Fermi130Data),color = 'r')
+    #plt.text(np.mean(Fermi130Data)+.2, 2, 'Mean 120-140',rotation=90.)
+    
+    
+    #plt.title(r'$\mu = $' + str(round(x,6)) + r' $\sigma=$ '+ str(round(sigma,6)))
+    
+    #ax1.plot(gaussX,gaussY)
+    ax1.set_xlim((0,3))
+    
+#    gaussX_130 = np.arange(0,3,.01)
+#    gaussY_130 = mlab.normpdf(gaussX_130,np.mean(Fermi130Data),np.std(Fermi130Data)/math.sqrt(len(Fermi130Data)))
+#    ax1.plot(gaussX_130,gaussY_130,ls ='-')
+    ax1.step(histFermi[1][1:],histFermi[0]/float(len(Fermi130Data)), label = 'Fermi 130 Clusters')    
+    #'Fermi 130 Mean','Fermi 130 Hist'
+    from matplotlib.font_manager import FontProperties
+    fontP = FontProperties()
+    fontP.set_size('small')
+    ax1.legend(loc=1, ncol=1, fancybox=True, shadow=False,prop=fontP,borderaxespad=0.,labelspacing = .2)
+    
+    
+    if fileOut != '':
+        pp = PdfPages(fileOut + '.pdf')
+        plt.savefig(pp, format='pdf')
+        print "Figures saved to ", str(fileOut)+ '.pdf\n',
+        pp.close()
+    return 
+    
+
+
+def Plot_Rate_Map(mapName,angularSize,fileOut):
+    """Plot the map of annihilation rate"""
+    
+    map = pickle.load(open(mapName, "r" ))
+    img = plt.imshow(map,origin='lower', extent=[-angularSize/2,angularSize/2,-angularSize/2,angularSize/2])
+    plt.colorbar(orientation='vertical')
+    
+    plt.xlabel(r'$l[^\circ]$')
+    plt.ylabel(r'$b[^\circ]$')
+    plt.title(r'$\rho_{DM}^2$')
+
+    plt.savefig(str(fileOut)+ '.png')
+    #plt.show()
+    plt.clf()
+    
+    
+    
+def Plot_MC_Positions(MCList,fileOut):
+    """Plot results from a pickled list of monte carlo simulations"""
+    plt.clf()
+    MCList = pickle.load(open(MCList, "r" ))
+    #for i in range(len(MCList)):
+    #    plt.scatter(MCList[i][0], MCList[i][1],color = 'b')
+    plt.scatter(MCList[0][0], MCList[0][1],color = 'b',s=4,marker='+')
+        
+    plt.xlabel(r'$l[^\circ]$')
+    plt.ylabel(r'$b[^\circ]$')
+    plt.title(r'Count Map')
+    plt.legend()
+    
+    pp = PdfPages(fileOut + '.pdf')
+    plt.savefig(pp, format='pdf')
+    print "Figures saved to ", str(fileOut)+ '.pdf\n',
+    pp.close()
+    plt.savefig(fileOut + '.png', format='png')
+
+    plt.show()    
+
+
+def Plot_Fermi_Data(x,y,fileOut,xLim=(-5,5),yLim=(-5,5),titleString = '', colormap=False, t = []):
+    """Plot results from a pickeled list of monte carlo simulations"""
+    
+    plt.clf()
+    fig = plt.figure(1)
+    ax1 = fig.add_subplot(1,1,1, aspect='equal')
+    
+    if (colormap == True and t != []):
+        scatter = ax1.scatter(x,y,c=t)
+        plt.colorbar(scatter)
+    else:
+        ax1.scatter(x, y)#, s=5,lw =2,color = 'b')
+    
+    ax1.set_xlim(xLim[1],xLim[0])
+    ax1.set_ylim(yLim[0],yLim[1])
+    
+    plt.xlabel(r'$l[^\circ]$')
+    plt.ylabel(r'$b[^\circ]$')
+    #plt.title(r''+titleString)
+    
+    
+    
+    pp = PdfPages(fileOut + '.pdf')
+    plt.savefig(pp, format='pdf')
+    print "Figures saved to ", str(fileOut)+ '.pdf\n',
+    pp.close()
+
+    plt.show()    
+
+def Plot_MC_Density(MCList,fileOut,outputSize,angularSize):
+    """Plot results from a pickeled list of monte carlo simulations"""
+    MCDens = np.zeros((outputSize,outputSize))
+    plt.clf()
+    MCList = pickle.load(open(MCList, "r" ))
+    for i in range(len(MCList)):
+        for j in range(len(MCList[i][0])):
+            MCDens[MCList[i][0][j],MCList[i][1][j]]+=1.0
+    img = plt.imshow(MCDens/float(np.max(MCDens)),origin='lower', extent=[-angularSize/2,angularSize/2,-angularSize/2,angularSize/2],vmin=0, vmax=1.0)
+    plt.colorbar(orientation='vertical')
+    plt.xlabel(r'$l[^\circ]$')
+    plt.ylabel(r'$b[^\circ]$')
+    plt.title('Relative Counts')
+    plt.savefig(str(fileOut)+ '.png')         
+    pp = PdfPages(fileOut + '.pdf')
+    plt.savefig(pp, format='pdf')
+    print "Figures saved to ", str(fileOut)+ '.pdf\n',
+    pp.close()
+    plt.savefig(fileOut + '.png', format='png')
+    plt.show()    
+    
+    
+def Plot_MC_Density_Direct(MCList,fileOut,outputSize,angularSize,mapName):
+    """Plot results from a pickeled list of monte carlo simulations"""
+    MCDens = np.zeros((outputSize,outputSize))
+    rateMap = pickle.load(open(mapName, "r" ))
+    plt.clf()
+    for i in range(len(MCList)):
+        for j in range(len(MCList[i][0])):
+            MCDens[MCList[i][0][j],MCList[i][1][j]]+=1.0
+    MCDens = MCDens/float(np.max(MCDens))
+    for i in range(outputSize):
+        for j in range(outputSize):
+            MCDens[i][j] /= rateMap[i][j]
+    img = plt.imshow(MCDens,origin='lower', extent=[-angularSize/2,angularSize/2,-angularSize/2,angularSize/2])
+    plt.colorbar(orientation='vertical')
+    
+    plt.xlabel(r'$l[^\circ]$')
+    plt.ylabel(r'$b[^\circ]$')
+    plt.title('Relative Counts')
+
+    plt.savefig(str(fileOut)+ '.png')         
+    
+    pp = PdfPages(fileOut + '.pdf')
+    plt.savefig(pp, format='pdf')
+    plt.savefig(str(fileOut+"2")+ '.png')
+    print "Figures saved to ", str(fileOut)+ '.pdf\n',
+    pp.close()
+    plt.savefig(fileOut + '.png', format='png')
+
+    plt.show()    
+
+def Plot_MC_Centroids(X,Y,fileOut,xLim=(2.5,-2.5),yLim=(-2.5,2.5)):
+    """Plot centroids from a list of monte carlo simulations"""
+    import pylab,math
+    plt.clf()
+    
+    fig = plt.figure(1)
+    fig.add_subplot(1,1,1,aspect = 'equal')
+    plt.scatter(X,Y, s=1,lw =0,color = 'b',rasterized=True)
+    
+    plt.xlabel(r'$l[^\circ]$')
+    plt.ylabel(r'$b[^\circ]$')
+    #plt.title(r'Centroids')
+    
+    r = []
+    for i in range(len(X)):
+        r.append(math.sqrt(X[i]**2.+Y[i]**2.))
+    sigma = np.std(r)
+    cir = pylab.Circle((np.average(X),np.average(Y)), radius=sigma, alpha =.3, fc='b')
+    cir2 = pylab.Circle((np.average(X),np.average(Y)), radius=sigma*2., alpha =.3, fc='r')
+    cir3 = pylab.Circle((np.average(X),np.average(Y)), radius=sigma*3., alpha =.3, fc='y')
+    
+    cent1 = (-0.12672151515151459, 0.32554675757575757) #106-121
+    cent2 = (-0.768305075000001, 0.13957773025000009) # 121-136
+    cent3 = (-1.2090912941176524, 0.28272128823529419) #136-151
+    plt.scatter(cent1[0],cent1[1], marker = '+', s = 200,lw=2, color = 'r')
+    plt.scatter(cent2[0],cent2[1], marker = '+', s = 200,lw=2, color = 'g')
+    plt.scatter(cent3[0],cent3[1], marker = '+', s = 200,lw=2, color = 'purple')
+    
+    plt.legend(('MC','106-121 GeV','121-136 GeV','136-151 GeV'))
+    pylab.gca().add_patch(cir3)
+    pylab.gca().add_patch(cir2)
+    pylab.gca().add_patch(cir)
+    
+    plt.xlim(xLim)
+    plt.ylim(yLim)
+    
+    if fileOut!='':
+        pp = PdfPages(fileOut + '.pdf')
+        plt.savefig(pp, format='pdf',dpi=300)
+        print "Figures saved to ", str(fileOut)+ '.pdf\n',
+        pp.close()
+
+    #plt.show()    
+    
+    
+    
+def DBSCAN_STATS(clusterData, fileOut = ''):    
+    fig = plt.figure(1)
+
+        
+    hist= []
+    for i in clusterData:
+        hist.append(plt.hist(i[0], bins=16, label = clusterData[0][4]))
+    
+    #plt.clf()
+    fig.set_figwidth(10)
+    fig.set_figheight(8)
+    
+    
+    ax1 = fig.add_subplot(1,1,1)
+    ax1.set_xlabel(r'Clustering Scale $[^\circ]$')
+    plt.show()
+    #for i in range(len(clusterData)):
+    #    ax1.step(hist[1][i][1][1:],hist[0][i][0]/float(len(clusterData[i][0])),label = clusterData[4])
+    
+    #plt.axvline(np.mean(Fermi130Data),color = 'r')
+    #plt.text(np.mean(Fermi130Data)+.2, 2, 'Mean 120-140',rotation=90.)
+    
+
+    
+    from matplotlib.font_manager import FontProperties
+    fontP = FontProperties()
+    fontP.set_size('small')
+    ax1.legend(loc=1, ncol=1, fancybox=True, shadow=False,prop=fontP,borderaxespad=0.,labelspacing = .2)
+    
+    
+    if fileOut != '':
+        pp = PdfPages(fileOut + '.pdf')
+        plt.savefig(pp, format='pdf')
+        print "Figures saved to ", str(fileOut)+ '.pdf\n',
+        pp.close()
+    return 
+
+
+
+def DBSCAN_Compute_Clusters(mcSims, eps = 0.201719,n_cluster = 3,nCore = 2, S_cut=1.0,flatLevel = .25, outputSize=300, angularSize = 10.0,numAnalyze=0, fileout = ''):
+    '''
+    Main DBSCAN cluster method.  Input a list of simulation files and keywords.  If fileout is non-null, then results are written to file.
+    
+    return: 
+    '''
+    
+    if ((numAnalyze == 0) or (numAnalyze > len(mcSims))):
+        numAnalyze =len(mcSims)
+    
+    print 'Analyzing ' + str(numAnalyze) + ' simulations...'
+    
+    
+    BGTemplate = pickle.load(open('BGRateMap.pickle','r'))
+    
+    cluster_Count = []   # Mean Number of clusters found
+    cluster_Scale = []   # Mean Cluster Scale weighted by significance
+    cluster_S = []       # Mean Significance weighted by number of cluster members
+    cluster_Members = [] # Mean number of cluster Members
+    
+    for sim in mcSims:
+        
+        xVec = Pixel_to_Degrees(sim[0], outputSize, angularSize)
+        yVec = Pixel_to_Degrees(sim[1], outputSize, angularSize)
+        X = []
+        for i in range(len(xVec)):
+            X.append((xVec[i],yVec[i]))
+        
+        (clusters, clusterCount, noiseCount) = DBSCAN.RunDBScan(X, eps, n_cluster,nCore = nCore, plot=False)
+        
+    
+        #===========================================================================
+        # Compute Cluster Properties
+        #===========================================================================
+        clusterSigs = []
+        clusterDist = []
+        clusterSigmas = []
+        clusterMembers = []
+        for cluster in clusters:
+            S =  DBSCAN.Compute_Cluster_Significance(cluster, BGTemplate, len(xVec),flatLevel = flatLevel)
+            if S>S_cut:
+                d, sigma = DBSCAN.Compute_Cluster_Scale(cluster)  # compute the cluster Scale
+                clusterSigs.append(S)
+                clusterDist.append(d)
+                clusterSigmas.append(sigma)
+                clusterMembers.append(len(cluster))
+                
+                #print S, d, len(cluster)
+        # If no clusters found
+        if len(clusterSigs)==0:
+            continue
+        #===========================================================================
+        # Compute Weighted Mean and Weighted Stdev 
+        #===========================================================================
+        clusterScale = np.average(clusterDist, weights = clusterSigs)
+        weights = np.array(clusterSigs)/np.sum(clusterSigs)
+        stdev = 0
+        for i in range(len(clusterSigmas)):
+            stdev += weights[i]**2 * clusterSigmas[i]**2 
+        stdev = math.sqrt(stdev)
+        #print clusterScale, stdev
+        # Append to Master List
+        cluster_Scale.append(clusterScale)
+        cluster_S.append(np.average(clusterSigs,weights = clusterMembers))
+        cluster_Count.append(len(clusters))
+        cluster_Members.append(np.mean(clusterMembers))
+        
+        #=======================================================================
+        # Status Output
+        #=======================================================================
+        if (i%5==0):
+            sys.stdout.write('\r' + str(i+1)+'/'+str(len(mcSims)))
+            sys.stdout.flush()
+        
+    output = (cluster_Scale, cluster_S, cluster_Count, cluster_Members)
+    # Write results to file
+    if fileout != '':
+        pickle.dump(output, open(fileout, 'wb'))
+        
+    return output
+    
+
+    
+    
