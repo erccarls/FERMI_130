@@ -14,7 +14,7 @@ numPhotons = 48
 numPhotons2 = 2000
 outputSize = 300
 
-numProcs = 12
+numProcs = 10
 run48 = False   
 run2000 = True
 
@@ -204,9 +204,13 @@ def Gen_Plots2(fileout = 'Cluster_All_48'):
         
         
         num_less= 0 # number of simulations with at least one cluster s>2
+        num_less2 = 0
+        num_less3 = 0
         full_count = []
         num_less_s_list = []
         for sim in cluster_Out:
+            
+            count2 = 0
             full_count.append(len(sim))
             num_less_s = 0    
             breakFlag = False
@@ -216,14 +220,25 @@ def Gen_Plots2(fileout = 'Cluster_All_48'):
                 if cluster[0] > 1.287 and breakFlag == False:
                     num_less += 1
                     breakFlag = True
-
+                if cluster[0] > 1.287:
+                    count2 += 1
+                    if count2 == 2:
+                        num_less2 += 1
+                    if count2 == 3:
+                        num_less3 += 1
+                
+            
             num_less_s_list.append(num_less_s)
         
         
         count.append(full_count)
         countLess.append(num_less_s_list)
+        
         print i
         print 'Percentage of Sims with at least 1 cluster S > 1.287:' , float(num_less)/float(len(cluster_Out))
+        print 'Percentage of Sims with at least 2 cluster S > 1.287:' , float(num_less2)/float(len(cluster_Out))
+        print 'Percentage of Sims with at least 3 cluster S > 1.287:' , float(num_less3)/float(len(cluster_Out))
+        print 
         
     plt.clf()
     
@@ -236,12 +251,12 @@ def Gen_Plots2(fileout = 'Cluster_All_48'):
     MCSTATS.Plot_Cluster_Scales(sigs, labels,r'S',fig,1,   bins=30, fileout='Cluster_Sigs',PlotFermiScale = True)
     
     
-    MCSTATS.Plot_Cluster_Scales(scales, labels,r'$r_{cluster}[^\circ]$',fig,3, bins=30, fileout='Cluster_Scaling',PlotFermiScale = True)
+    MCSTATS.Plot_Cluster_Scales(scales, labels,r'$r_{cluster}[^\circ] | s > 1.287$',fig,3, bins=30, fileout='Cluster_Scaling',PlotFermiScale = True)
     
-    MCSTATS.Plot_Cluster_Scales(countLess, labels,r'$N_{clusters}|s>1.287$',fig,5,  bins=50, fileout='Cluster_Count',PlotFermiScale = True)
+    MCSTATS.Plot_Cluster_Scales(countLess, labels,r'$N_{clusters} | s > 1.287$',fig,5,  bins=50, fileout='Cluster_Count',PlotFermiScale = True)
     #MCSTATS.Plot_Cluster_Scales(countLess, labels,r'$N_{clusters}$',fig,-5,  bins=50, fileout='Cluster_Count',PlotFermiScale = True)
     
-    MCSTATS.Plot_Cluster_Scales(members, labels,r'$N_{members}$',fig,7,bins=30, fileout='Cluster_Members',PlotFermiScale = True)
+    MCSTATS.Plot_Cluster_Scales(members, labels,r'$N_{members} | s > 1.287$',fig,7,bins=30, fileout='Cluster_Members',PlotFermiScale = True)
     
     if fileout != '':
         pp = PdfPages(fileout + '.pdf')
@@ -348,12 +363,12 @@ def Gen_Plots3(fileout = 'Cluster_All_500'):
     MCSTATS.Plot_Cluster_Scales(sigs, labels,r'S',fig,2,   bins=30, fileout='Cluster_Sigs')
     #plt.legend(loc=1, ncol=1, fancybox=True, shadow=False,prop=fontP,borderaxespad=0.,labelspacing = .2)
     #plt.legend(loc=1, ncol=1, fancybox=True, shadow=False,prop=fontP,borderaxespad=0.,labelspacing = .2)
-    MCSTATS.Plot_Cluster_Scales(scales, labels,r'$r_{cluster}[^\circ]$',fig,4, bins=30, fileout='Cluster_Scaling')
+    MCSTATS.Plot_Cluster_Scales(scales, labels,r'$r_{cluster}[^\circ] | s > 2$',fig,4, bins=30, fileout='Cluster_Scaling')
     
     MCSTATS.Plot_Cluster_Scales(countLess, labels,r'$N_{clusters} | s > 2$',fig,6,  bins=30, fileout='Cluster_Count')
     #MCSTATS.Plot_Cluster_Scales(countLess, labels,r'$N_{clusters}$',fig,-6,  bins=30, fileout='Cluster_Count')
     
-    MCSTATS.Plot_Cluster_Scales(members, labels,r'$N_{members}$',fig,8,bins=30, fileout='Cluster_Members')
+    MCSTATS.Plot_Cluster_Scales(members, labels,r'$N_{members} | s > 2$',fig,8,bins=30, fileout='Cluster_Members')
     plt.legend(loc=1, ncol=1, fancybox=True, shadow=False,prop=fontP,borderaxespad=0.,labelspacing = .2)
     
     if fileout != '':
@@ -561,7 +576,7 @@ if len(sys.argv) > 1:
     if (sys.argv[1] == '11'):
         # NOTE: nCore are required num core points for cluster.  NCluster is N_min required in epsilon neighb.
         SNR = .95
-        run_DBSCAN_ANALYSIS(sys.argv[2],'Clusters_'+sys.argv[2], numAnalyze = 0, S_cut = 2.0, nCore = 3,nCluster = 6,eps=.2,angularSize = angularSize2, HESS = True,SNR = SNR)
+        run_DBSCAN_ANALYSIS(sys.argv[2],'Clusters_'+sys.argv[2], numAnalyze = 0, S_cut = 2.0, nCore = 3,nCluster = 8,eps=.25,angularSize = angularSize2, HESS = True,SNR = SNR)
         #Gen_Plots('Clusters_'+sys.argv[2])
     if (sys.argv[1] == '12'): 
         Gen_Plots2(fileout = 'Cluster_galprop_All_48')

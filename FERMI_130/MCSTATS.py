@@ -159,7 +159,7 @@ def Plot_Cluster_Scales(models, labels,xlabel, fig, subplot, bins = 100, fileout
     Generates the results summary plots.  See sample usage in runMC_v2
     """
     
-    width = .12
+    width = .08
       
     fig.add_subplot(4,2,abs(subplot))      
     
@@ -174,15 +174,17 @@ def Plot_Cluster_Scales(models, labels,xlabel, fig, subplot, bins = 100, fileout
             hist.append(np.histogram(i, bins=bins))
         
     
-    c = ['','','','','m','y','k','b','g','r']
+    c = ['b','g','r','c','m','y','k','b','g','r']
     
     for i in range(len(hist)):
         if  (abs(subplot) == 6 or abs(subplot) == 5):
             #plt.step(hist[i][1][:-1], np.array(hist[i][0],'float')/len(models[i]), label=labels[i])
             if subplot>0 and 'Pulsar' in labels[i]:
-                plt.bar(hist[i][1][:-1]+width*(i-7), np.array(hist[i][0],'float')/len(models[i]) , width ,fill = False, label=labels[i], edgecolor =c[i])
+                plt.bar(hist[i][1][:-1]+width*(i-7), np.array(hist[i][0],'float')/len(models[i]) , width ,fill = True, label=labels[i], color =c[i])
             elif 'Pulsar' in labels[i]:
                 plt.bar(hist[i][1][:-1]+width*(i-7), np.array(hist[i][0],'float')/len(models[i]) , width ,fill = True, color =c[i])
+            else:
+                plt.bar(hist[i][1][:-1]+width*(i-7), np.array(hist[i][0],'float')/len(models[i]) , width ,fill = False, label=labels[i], edgecolor =c[i])
             
             
         elif 'Pulsar' in labels[i] and subplot > 0:
